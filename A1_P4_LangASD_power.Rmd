@@ -1,0 +1,181 @@
+---
+title: "Assignment 1 - Language Development in ASD - part 4"
+author: "Riccardo Fusaroli"
+date: "August 10, 2017"
+output: html_document
+---
+
+## Welcome to the fourth exciting part of the Language Development in ASD exercise
+
+In this exercise we will assess how many participants we would need to adequately replicate our findings (ensuring our sample size is adequate, our alpha at 0.05 and our beta at 0.8).
+
+### Exercise 1
+
+How much power does your study have (if your model estimates are quite right)?
+- [GitHub]Load your dataset, fit your favorite model
+
+```{r}
+library(lme4)
+library(simr)
+data_train = read.csv("tidy_data.csv")
+data_train$ID =as.factor(data_train$ID)
+data_train$Gender=as.factor(data_train$Gender)
+data_train$Ethnicity=as.factor(data_train$Ethnicity)
+model_4 =lmer(CHI_MLU ~ VISIT+Diagnosis+verbalIQ+VISIT*Diagnosis+(1+VISIT|ID),data=data_train)
+model_winter =lmer(CHI_MLU~ VISIT+Diagnosis+verbalIQ+(1+VISIT|ID),data=data_train)
+
+summary(model_winter)
+```
+
+- Assess power for your main effects and interactions of interest.
+
+```{r}
+power_visit = powerSim(model_winter,fixed("VISIT",method='t'),nsim=1000)
+power_Diagnosis = powerSim(model_winter,fixed("Diagnosis",method='f'),nsim=1000)
+power_verbalIQ = powerSim(model_winter,fixed("verbalIQ",method='t'),nsim=1000)
+power_interact = powerSim(model_4,fixed("VISIT:Diagnosis",method='f'),nsim=1000)
+
+power_visit
+power_Diagnosis
+power_verbalIQ 
+power_interact 
+```
+
+
+- Report the power analysis and comment on what you can (or cannot) use its estimates for.
+
+I performed a power analysis via simulation (n of simulations=1000) using effects sizes estimated from model for all fixed effects; visit, diagnosis and verbalIQ; and the interaction term visit*diagnosis. The analysis of fixed effects were done using a model without an interaction.
+
+Results
+Power analysis of visit revealed that assuming that the effect size of visit is 0.23 than the power is 100 % (95% c.i. 99.63-100).
+The power of effect of diagnosis assuming the effect size of 0.16 is % 0 (0-.37).
+The power of effect of verbal IQ assuming the effect size of .075 is 100 % (99.63-100).
+The power of interaction between visit and diagnosis assuming the effect size of 0.25 is % (0-.37).
+
+This kind of analysis is not very conservative because it uses effect size estimates from model. The estimates might be the true effect size but we cannot be sure of that since they are estimated only from one sample and not from the whole population. The effect sizes should be identified before collecting and analyzing data. Therefore this kind of power analysis should not be taken very seriously as the effect sizes can be largely overestimated due to sample that is not represenative of the population and therefore results in small power. The results of this analysis can be used as a kind of a pilot study that can inform us about the effects that we are likely dealing with in follow up study.
+
+### Exercise 2
+
+How would you perform a more conservative power analysis?
+- Identify and justify a minimum effect size for each of your relevant effects
+- [GitHub] take the model from exercise 1 and replace the effects with the minimum effect size that you'd accept.
+```{r}
+#look on fixed effects estimated from model
+fixef(model_4) #interact= 0.2537
+fixef(model_winter) #Dia=.158, Visit=.233, verbal IQ=.0754
+
+#replace effects with minimum
+fixef(model_winter)["VISIT"] = 0.23
+fixef(model_winter)["DiagnosisTD"] = 0.07
+fixef(model_winter)["verbalIQ"] = 0.075
+fixef(model_4)["VISIT:DiagnosisTD"] = 0.25
+powerCurveV = powerCurve(model_winter,fixed("VISIT"),along="ID", nsim=200)
+powerCurveDia = powerCurve(model_winter,fixed("Diagnosis",method='f'),along="ID", nsim=200)
+powerCurveIQ = powerCurve(model_winter,fixed("verbalIQ"),along="ID", nsim=200)
+powerCurveInt = powerCurve(model_4,fixed("VISIT:Diagnosis",method='f'),along="ID", nsim=200)
+
+plot(powerCurveV) #10 = 100%
+plot(powerCurveDia) #not enough - might be linked to the p-value higher than .05
+plot(powerCurveIQ) #10 = 80%
+plot(powerCurveInt) #60 participant not enough - 70 would be probably alright
+```
+- [GitHub] assess the power curve by Child.ID, identifying an ideal number of participants to estimate each effect
+- OPTIONAL if your power estimates do not reach an acceptable threshold simulate additional participants and repeat the previous analysis
+- Report the power analysis and comment on what you can (or cannot) use its estimates for.
+
+```{r}
+
+### Riccardo's clumsy function to simulate new participants
+### TO DO points are only notes for myself, so not part of the assignment
+
+createNewData <- function (participants,visits,model){
+  # participants is the number of subjects
+  # visits is the number of visits
+  # TO DO: LOOP THROUGH ALL FE ROWS AND AUTOMATICALLY EXTRACT NAMES OF FIXED EFFECTS AND ESTIMATES
+  fe <- fixef(model)
+  Intercept <- fe[1] #intercept
+  bVisit <- fe[2] #visit
+  bDiagnosis <- fe[3] #diagnosis
+  bVisitDiagnosis <- fe[4] #visit diagnosis interaction
+  # TO DO: INTEGRATE STANDARD ERROR?
+  
+  # TO DO: LOOP THROUGH ALL VC COMPONENTS AND AUTOMATICALLY EXTRACT NAMES OF EFFECTS AND ESTIMATES
+  vc<-VarCorr(model) # variance component
+  sigmaSubject <- as.numeric(attr(vc[[1]],"stddev")[1]) # random intercept by subject
+  sigmaVisit <- as.numeric(attr(vc[[1]],"stddev")[2]) # random slope of visit over subject
+  sigmaResiduals <- as.numeric(attr(vc,"sc"))
+  sigmaCorrelation <- as.numeric(attr(vc[[1]],"correlation")[2])
+  
+  # Create an empty dataframe
+  d=expand.grid(Visit=1:visits,Child.ID=1:participants)
+  # Randomly sample from a binomial (to generate the diagnosis)
+  condition <- sample(rep(0:1, participants/2))
+  d$Diagnosis<-condition[d$Child.ID]
+  d$Diagnosis[is.na(d$Diagnosis)]<-1
+  
+  ## Define variance covariance matrices:
+  Sigma.u<-matrix(c(sigmaSubject^2,
+                    sigmaCorrelation*sigmaSubject*sigmaVisit,
+                    sigmaCorrelation*sigmaSubject*sigmaVisit,
+                    sigmaVisit^2),nrow=2)
+  
+  ## generate new fake participants (column1=RandomIntercept, column2=RandomSlope)
+  u<-MASS::mvrnorm(n=participants,
+             mu=c(0,0),Sigma=cov(ranef(model)$ID))
+  
+  ## now generate fake data:
+  ### the outcome is extracted from a gaussian with
+  ### the solution to the model's equation as mean and
+  ### the residual standard deviation as standard deviation 
+  d$CHI_MLU <- rnorm(participants*visits,
+                     (Intercept+u[,1]) +
+                     (bVisit+u[,2])*d$Visit + 
+                     bDiagnosis*d$Diagnosis ,sigmaResiduals)  
+  
+  return(d)
+}
+```
+
+
+Assume you have only the resources to collect 30 kids (15 with ASD and 15 TDs). Identify the power for each relevant effect and discuss whether it's worth to run the study and why.
+
+```{r}
+library(magrittr)
+library(dplyr)
+TDs = data_train %>% filter(Diagnosis=="TD") %>%group_by(ID)
+TDs_15 = TDs[1:88,]
+ASDs = data_train %>% filter(Diagnosis=="ASD") %>%group_by(ID)
+ASDs_15 = ASDs[1:86,]
+limited_data = rbind(TDs_15,ASDs_15)
+
+#make sure the new sample is balanced 50:50
+lim_vis_1=limited_data %>% filter(VISIT==1)
+sum(lim_vis_1$Diagnosis=="TD")
+sum(lim_vis_1$Diagnosis=="ASD")
+#       => Check
+
+model_limited = update(model_4,data=limited_data)
+model_limited_winter = update(model_winter,data=limited_data)
+
+#probably already fixed but just to be sure let's do it again
+fixef(model_winter)["VISIT"] = 0.23
+fixef(model_winter)["DiagnosisTD"] = 0.07
+fixef(model_winter)["verbalIQ"] = 0.075
+fixef(model_4)["VISIT:DiagnosisTD"] = 0.25
+
+#let's simulate
+power_lim_visit = powerSim(model_limited_winter,test=fixed("VISIT",method='t'),nsim=1000)
+power_lim_Diagnosis = powerSim(model_limited_winter,fixed("Diagnosis",method='t'),nsim=1000)
+power_lim_IQ = powerSim(model_limited_winter,fixed("verbalIQ",method='t'),nsim=1000)
+power_lim_interact = powerSim(model_limited,fixed("VISIT:Diagnosis",method='t'),nsim=1000)
+
+#print results of simulations
+power_lim_visit #good to go
+power_lim_Diagnosis # 13.1 % nope - also not significant so why bother
+power_lim_IQ  # 100 %
+power_lim_interact #35.7 - nope
+```
+
+
+
+
